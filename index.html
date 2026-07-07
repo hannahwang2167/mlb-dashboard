@@ -303,8 +303,7 @@ td.tc{text-align:center;width:44px;padding:6px 4px}
 
 <script>
 var ACCT = '5932487676805930';
-var ANTHROPIC_KEY = '%%ANTHROPIC_KEY%%'; // replaced by GitHub Actions
-var META_TOKEN = '%%META_TOKEN%%';       // replaced by GitHub Actions
+var WORKER_URL = 'https://super-heart-84a3.xiangting2167.workers.dev';
 var C = ['#1a56a8','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#64748b'];
 
 // ── State ──
@@ -513,13 +512,12 @@ async function fetchAll(){
 {"campaigns":[{"id":"...","name":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"...","result_values":[...]}],"adsets":[{"id":"...","name":"...","campaign_id":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"...","result_values":[...]}],"daily":[{"date_start":"...","amount_spent":"...","purchase_roas":"...","actions:omni_purchase":"..."}],"ads":[{"id":"...","name":"...","campaign_id":"...","creative_id":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"...","result_values":[...]}],"age":[{"age":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"..."}],"gender":[{"gender":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"..."}]}`;
 
   try{
-    var resp=await fetch('https://api.anthropic.com/v1/messages',{
+    var resp=await fetch(WORKER_URL,{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01'},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         model:'claude-sonnet-4-6',
         max_tokens:8000,
-        mcp_servers:[{type:'url',url:'https://mcp.facebook.com/ads',name:'meta-ads',authorization_token:META_TOKEN}],
         messages:[{role:'user',content:prompt}]
       })
     });
