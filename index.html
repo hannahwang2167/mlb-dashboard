@@ -408,7 +408,7 @@ function renderCreatives(){
   document.getElementById('cr-cnt').textContent=data.length+' 筆';
   document.getElementById('tb-cr').innerHTML=data.map(function(a){
     var cplc=a.lc>0?a.spend/a.lc:0, cpa=a.pur>0?a.spend/a.pur:0;
-    var imgTag='<img class="thumb" src="https://graph.facebook.com/v21.0/'+a.creativeId+'/thumbnail?access_token='+META_TOKEN+'" onerror="this.outerHTML=\'<div class=thumb-ph>IMG</div>\'" alt="">';
+    var imgTag=a.thumb?'<img class="thumb" src="'+a.thumb+'" onerror="this.outerHTML=\'<div class=thumb-ph>IMG</div>\'" alt="">':'<div class="thumb-ph">IMG</div>';
     return '<tr><td title="'+a.name+'">'+a.name+'</td><td class="tc">'+imgTag+'</td><td>'+NT(a.spend)+'</td><td>'+barCell(a.spend,total)+'</td><td>'+N(a.imp)+'</td><td>'+a.ctr.toFixed(2)+'%</td><td>'+N(a.lc)+'</td><td>'+(cplc>0?NT(cplc):'—')+'</td><td>'+a.pur+'</td><td>'+(a.rev>0?NT(a.rev):'—')+'</td><td>'+roasCell(a.roas)+'</td><td>'+(cpa>0?NT(cpa):'—')+'</td></tr>';
   }).join('');
 }
@@ -483,6 +483,18 @@ function sw(id,el){
   });
 }
 
+// ── Helper: extract action value from Meta actions array ──
+function getAction(actions, actionType) {
+  if (!Array.isArray(actions)) return 0;
+  const found = actions.find(function(a) { return a.action_type === actionType; });
+  return found ? parseFloat(found.value) || 0 : 0;
+}
+function getActionVal(actionValues, actionType) {
+  if (!Array.isArray(actionValues)) return 0;
+  const found = actionValues.find(function(a) { return a.action_type === actionType; });
+  return found ? parseFloat(found.value) || 0 : 0;
+}
+
 // ── MAIN FETCH ──
 async function fetchAll(){
   var since=document.getElementById('d1').value;
@@ -495,65 +507,78 @@ async function fetchAll(){
   spin.innerHTML='<span class="spin"></span> ';
   status.className='dstatus';
   status.textContent='更新中…';
-  var tr=JSON.stringify({since:since,until:until});
-
-  // Build prompt for Claude to call Meta API directly
-  var prompt = `請透過 Meta Ads MCP 工具幫我查詢以下資料，帳戶 ID：${ACCT}，時間範圍：${tr}
-
-請分別執行以下查詢：
-1. ads_get_ad_entities，level=campaign，fields: id, name, amount_spent, impressions, clicks, ctr, purchase_roas, actions:omni_purchase, actions:link_click, result_values，sort: amount_spent_descending
-2. ads_get_ad_entities，level=adset，fields: id, name, campaign_id, amount_spent, impressions, clicks, ctr, purchase_roas, actions:omni_purchase, actions:link_click, result_values，sort: amount_spent_descending, limit: 50
-3. ads_get_ad_entities，level=account，time_increment=1（每日），fields: amount_spent, impressions, clicks, purchase_roas, actions:omni_purchase, actions:link_click
-4. ads_get_ad_entities，level=ad，fields: id, name, campaign_id, amount_spent, impressions, clicks, ctr, purchase_roas, actions:omni_purchase, actions:link_click, result_values, creative_id，sort: amount_spent_descending, limit: 50
-5. ads_get_ad_entities，level=account，breakdowns: age，fields: amount_spent, impressions, clicks, ctr, purchase_roas, actions:omni_purchase, actions:link_click, actions:add_to_cart，（若 add_to_cart 不支援可省略）
-6. ads_get_ad_entities，level=account，breakdowns: gender，fields: amount_spent, impressions, clicks, ctr, purchase_roas, actions:omni_purchase, actions:link_click
-
-最後請只回傳純 JSON，格式如下，不要任何說明：
-{"campaigns":[{"id":"...","name":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"...","result_values":[...]}],"adsets":[{"id":"...","name":"...","campaign_id":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"...","result_values":[...]}],"daily":[{"date_start":"...","amount_spent":"...","purchase_roas":"...","actions:omni_purchase":"..."}],"ads":[{"id":"...","name":"...","campaign_id":"...","creative_id":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"...","result_values":[...]}],"age":[{"age":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"..."}],"gender":[{"gender":"...","amount_spent":"...","impressions":"...","clicks":"...","ctr":"...","purchase_roas":"...","actions:omni_purchase":"...","actions:link_click":"..."}]}`;
 
   try{
     var resp=await fetch(WORKER_URL,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-6',
-        max_tokens:8000,
-        messages:[{role:'user',content:prompt}]
-      })
+      body:JSON.stringify({since:since,until:until})
     });
-    if(!resp.ok){var e=await resp.text();throw new Error('API '+resp.status+': '+e);}
-    var data=await resp.json();
-    var txt=(data.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('');
-    var m=txt.match(/\{[\s\S]*\}/);
-    if(!m)throw new Error('回傳格式錯誤');
-    var p=JSON.parse(m[0]);
+    if(!resp.ok){var e=await resp.text();throw new Error('Worker '+resp.status+': '+e);}
+    var p=await resp.json();
 
-    if(p.campaigns&&p.campaigns.length){
+    if(p.error) throw new Error(p.error);
+
+    // Check for Meta API errors
+    if(p.errors && p.errors.campaigns) {
+      throw new Error('Meta API: ' + (p.errors.campaigns.message || JSON.stringify(p.errors.campaigns)));
+    }
+
+    // Parse campaigns
+    if(p.campaigns && p.campaigns.length){
       CAMPS=p.campaigns.map(function(c){
-        var s=parseNT(c.amount_spent),i=parseNum(c.impressions),l=parseNum(c['actions:link_click']),pu=parseNum(c['actions:omni_purchase']),rv=parseRV(c.result_values),ro=parseFloat(c.purchase_roas)||0;
-        return{id:c.id,name:c.name,spend:s,imp:i,lc:l,pur:pu,rev:rv,roas:ro,ctr:parseFloat(c.ctr)||0};
+        var s=parseFloat(c.spend)||0;
+        var i=parseNum(c.impressions);
+        var lc=getAction(c.actions,'link_click');
+        var pu=getAction(c.actions,'omni_purchase')||getAction(c.actions,'purchase');
+        var rv=getActionVal(c.action_values,'omni_purchase')||getActionVal(c.action_values,'purchase');
+        var ro=Array.isArray(c.purchase_roas)&&c.purchase_roas[0]?parseFloat(c.purchase_roas[0].value)||0:0;
+        var ctr=parseFloat(c.ctr)||0;
+        return{id:c.campaign_id,name:c.campaign_name,spend:s,imp:i,lc:lc,pur:pu,rev:rv,roas:ro,ctr:ctr};
       }).filter(function(c){return c.spend>0});
     }
-    if(p.adsets&&p.adsets.length){
+
+    // Parse adsets
+    if(p.adsets && p.adsets.length){
       ADSETS=p.adsets.map(function(c){
-        var s=parseNT(c.amount_spent),i=parseNum(c.impressions),l=parseNum(c['actions:link_click']),pu=parseNum(c['actions:omni_purchase']),rv=parseRV(c.result_values),ro=parseFloat(c.purchase_roas)||0;
-        return{cid:c.campaign_id,name:c.name,spend:s,imp:i,lc:l,pur:pu,rev:rv,roas:ro,ctr:parseFloat(c.ctr)||0};
+        var s=parseFloat(c.spend)||0;
+        var i=parseNum(c.impressions);
+        var lc=getAction(c.actions,'link_click');
+        var pu=getAction(c.actions,'omni_purchase')||getAction(c.actions,'purchase');
+        var rv=getActionVal(c.action_values,'omni_purchase')||getActionVal(c.action_values,'purchase');
+        var ro=Array.isArray(c.purchase_roas)&&c.purchase_roas[0]?parseFloat(c.purchase_roas[0].value)||0:0;
+        var ctr=parseFloat(c.ctr)||0;
+        return{cid:c.campaign_id,name:c.adset_name,spend:s,imp:i,lc:lc,pur:pu,rev:rv,roas:ro,ctr:ctr};
       }).filter(function(c){return c.spend>0});
     }
-    if(p.daily&&p.daily.length){
+
+    // Parse daily
+    if(p.daily && p.daily.length){
       DAILY=p.daily.map(function(d){
-        var ds=d.date_start||'';
-        return{d:ds.replace(/^2026-/,'').replace(/-0?/,'/'),spend:parseNT(d.amount_spent),roas:parseFloat(d.purchase_roas)||0,pur:parseNum(d['actions:omni_purchase'])};
+        var ds=(d.date_start||'').replace(/^\d{4}-/,'').replace('-0','/').replace('-','\/');
+        var ro=Array.isArray(d.purchase_roas)&&d.purchase_roas[0]?parseFloat(d.purchase_roas[0].value)||0:0;
+        var pu=getAction(d.actions,'omni_purchase')||getAction(d.actions,'purchase');
+        return{d:ds,spend:parseFloat(d.spend)||0,roas:ro,pur:pu};
       });
     }
-    if(p.ads&&p.ads.length){
+
+    // Parse ads → merge by name
+    if(p.ads && p.ads.length){
       var merged={};
       p.ads.forEach(function(a){
-        var n=a.name,cid=a.campaign_id||'';
-        var s=parseNT(a.amount_spent),i=parseNum(a.impressions),l=parseNum(a['actions:link_click']),pu=parseNum(a['actions:omni_purchase']),rv=parseRV(a.result_values);
-        if(!merged[n]) merged[n]={name:n,creativeId:a.creative_id||'',spend:0,imp:0,lc:0,pur:0,rev:0,campIds:[]};
-        merged[n].spend+=s;merged[n].imp+=i;merged[n].lc+=l;merged[n].pur+=pu;merged[n].rev+=rv;
-        if(cid&&merged[n].campIds.indexOf(cid)<0)merged[n].campIds.push(cid);
+        var n=a.ad_name||a.name||'—';
+        var cid=a.campaign_id||'';
+        var s=parseFloat(a.spend)||0;
+        var i=parseNum(a.impressions);
+        var lc=getAction(a.actions,'link_click');
+        var pu=getAction(a.actions,'omni_purchase')||getAction(a.actions,'purchase');
+        var rv=getActionVal(a.action_values,'omni_purchase')||getActionVal(a.action_values,'purchase');
+        var thumb=(p.creativeMap&&p.creativeMap[a.ad_id])?p.creativeMap[a.ad_id].thumb:null;
+        var crid=(p.creativeMap&&p.creativeMap[a.ad_id])?p.creativeMap[a.ad_id].id:'';
+        if(!merged[n]) merged[n]={name:n,thumb:thumb,crid:crid,spend:0,imp:0,lc:0,pur:0,rev:0,campIds:[]};
+        merged[n].spend+=s;merged[n].imp+=i;merged[n].lc+=lc;merged[n].pur+=pu;merged[n].rev+=rv;
+        if(!merged[n].thumb&&thumb) merged[n].thumb=thumb;
+        if(cid&&merged[n].campIds.indexOf(cid)<0) merged[n].campIds.push(cid);
       });
       ADS=Object.values(merged).map(function(a){
         a.roas=a.spend>0&&a.rev>0?parseFloat((a.rev/a.spend).toFixed(2)):0;
@@ -561,16 +586,32 @@ async function fetchAll(){
         return a;
       }).sort(function(a,b){return b.spend-a.spend});
     }
-    if(p.age&&p.age.length){
+
+    // Parse age
+    if(p.age && p.age.length){
       AGE_DATA=p.age.map(function(r){
-        var s=parseNT(r.amount_spent),i=parseNum(r.impressions),cl=parseNum(r.clicks)||parseNum(r['actions:link_click']),pu=parseNum(r['actions:omni_purchase']),atc=parseNum(r['actions:add_to_cart'])||parseNum(r['actions:link_click']),rv=parseRV(r.result_values),ro=parseFloat(r.purchase_roas)||0;
+        var s=parseFloat(r.spend)||0;
+        var i=parseNum(r.impressions);
+        var cl=getAction(r.actions,'link_click');
+        var pu=getAction(r.actions,'omni_purchase')||getAction(r.actions,'purchase');
+        var atc=getAction(r.actions,'add_to_cart');
+        var rv=getActionVal(r.action_values,'omni_purchase')||getActionVal(r.action_values,'purchase');
+        var ro=Array.isArray(r.purchase_roas)&&r.purchase_roas[0]?parseFloat(r.purchase_roas[0].value)||0:0;
         return{age:r.age,spend:s,imp:i,clicks:cl,ctr:parseFloat(r.ctr)||0,atc:atc,pur:pu,rev:rv,roas:ro};
       }).sort(function(a,b){return b.spend-a.spend});
     }
-    if(p.gender&&p.gender.length){
+
+    // Parse gender
+    if(p.gender && p.gender.length){
       var gmap={'male':'男性','female':'女性','unknown':'不明'};
       GEN_DATA=p.gender.map(function(r){
-        var s=parseNT(r.amount_spent),i=parseNum(r.impressions),cl=parseNum(r.clicks)||parseNum(r['actions:link_click']),pu=parseNum(r['actions:omni_purchase']),atc=parseNum(r['actions:add_to_cart'])||0,rv=parseRV(r.result_values),ro=parseFloat(r.purchase_roas)||0;
+        var s=parseFloat(r.spend)||0;
+        var i=parseNum(r.impressions);
+        var cl=getAction(r.actions,'link_click');
+        var pu=getAction(r.actions,'omni_purchase')||getAction(r.actions,'purchase');
+        var atc=getAction(r.actions,'add_to_cart');
+        var rv=getActionVal(r.action_values,'omni_purchase')||getActionVal(r.action_values,'purchase');
+        var ro=Array.isArray(r.purchase_roas)&&r.purchase_roas[0]?parseFloat(r.purchase_roas[0].value)||0:0;
         return{gen:gmap[r.gender]||r.gender,spend:s,imp:i,clicks:cl,ctr:parseFloat(r.ctr)||0,atc:atc,pur:pu,rev:rv,roas:ro};
       }).sort(function(a,b){return b.spend-a.spend});
     }
