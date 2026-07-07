@@ -461,7 +461,7 @@ function renderDonut(){
 }
 
 // ── Date presets ──
-function todayStr(){return new Date().toISOString().split('T')[0]}
+function todayStr(){var d=new Date();var y=d.getFullYear();var m=String(d.getMonth()+1).padStart(2,'0');var day=String(d.getDate()).padStart(2,'0');return y+'-'+m+'-'+day;}
 function offsetDate(days){var d=new Date();d.setDate(d.getDate()+days);return d.toISOString().split('T')[0]}
 function qd(preset,el){
   document.querySelectorAll('.dq').forEach(function(b){b.classList.remove('on')});
@@ -642,6 +642,11 @@ window.addEventListener('load',function(){
   var today=todayStr();
   document.getElementById('d1').value=today.slice(0,7)+'-01';
   document.getElementById('d2').value=today;
+  // Also set the "本月" button as active and ensure dates are visible
+  var d1el=document.getElementById('d1');
+  var d2el=document.getElementById('d2');
+  if(!d1el.value) d1el.value=today.slice(0,7)+'-01';
+  if(!d2el.value) d2el.value=today;
 });
 </script>
 </body>
